@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Blue Dot Conversation Analytics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+  :root{
+    --bg:#f0f4f8;--panel:#ffffff;--border:#e2e8f0;
+    --text:#1e293b;--muted:#64748b;--soft:#f8fafc;
+    --accent:#6366f1;--accent2:#0ea5e9;
+    --seeker:#6366f1;--provider:#0ea5e9;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;overflow:hidden;}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;display:flex;flex-direction:column;}
+
+  header{flex-shrink:0;padding:9px 18px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+  header h1{font-size:14px;font-weight:700;letter-spacing:.3px;}
+  header .tag{background:var(--accent);color:#fff;font-size:9px;padding:2px 7px;border-radius:20px;font-weight:600;}
+
+  /* sidebar + content */
+  .layout{flex:1;display:grid;grid-template-columns:190px 1fr;overflow:hidden;}
+
+  aside{background:var(--panel);border-right:1px solid var(--border);padding:12px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;}
+  .filter-group>label{display:block;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px;}
+  .pill-group{display:flex;flex-wrap:wrap;gap:4px;}
+  .pill{padding:3px 8px;border-radius:20px;border:1.5px solid var(--border);cursor:pointer;font-size:11px;color:var(--muted);background:var(--soft);transition:all .15s;user-select:none;}
+  .pill:hover{border-color:var(--accent);color:var(--accent);}
+  .pill.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .pill.provider.active{background:var(--provider);border-color:var(--provider);}
+  .search-box{width:100%;background:var(--soft);border:1.5px solid var(--border);border-radius:6px;color:var(--text);padding:6px 9px;font-size:12px;outline:none;}
+  .search-box:focus{border-color:var(--accent);}
+  .search-btn{margin-top:5px;width:100%;background:var(--accent);border:none;color:#fff;padding:6px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;}
+  .search-btn:hover{background:#4f46e5;}
+  .stat-card{background:var(--soft);border:1px solid var(--border);border-radius:8px;padding:7px 11px;}
+  .stat-card .val{font-size:19px;font-weight:800;color:var(--accent);}
+  .stat-card .lbl{font-size:10px;color:var(--muted);margin-top:1px;}
+
+  /* ── content area: 2-column top + timeline bottom ── */
+  .content{flex:1;display:grid;grid-template-rows:1fr auto;gap:10px;padding:10px;overflow:hidden;}
+
+  .top-area{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:0;}
+
+  /* left col: funnel + bucket stacked */
+  .left-col{display:grid;grid-template-rows:1fr 1fr;gap:10px;min-height:0;}
+
+  /* right col: search panel */
+  .search-panel{display:flex;flex-direction:column;min-height:0;}
+
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:11px;box-shadow:0 1px 4px rgba(0,0,0,.04);display:flex;flex-direction:column;overflow:hidden;min-height:0;}
+  .panel-title{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;flex-shrink:0;}
+
+  .timeline-row{flex-shrink:0;}
+  .timeline-row .panel{height:150px;}
+
+  .axis path,.axis line{stroke:var(--border);}
+  .axis text{fill:var(--muted);font-size:10px;}
+  .grid line{stroke:var(--border);stroke-dasharray:3;}
+  .bar{cursor:pointer;transition:opacity .15s;}
+  .bar:hover{opacity:.75;}
+
+  .tooltip{position:fixed;background:#fff;border:1px solid var(--border);border-radius:7px;padding:7px 11px;font-size:12px;pointer-events:none;opacity:0;transition:opacity .1s;z-index:99;max-width:230px;line-height:1.7;box-shadow:0 4px 12px rgba(0,0,0,.1);}
+  .tooltip strong{color:var(--accent);}
+
+  #search-results{overflow-y:auto;flex:1;min-height:0;}
+  .result-row{border-bottom:1px solid var(--border);padding:6px 2px;display:grid;grid-template-columns:1fr;gap:3px;}
+  .result-row:last-child{border-bottom:none;}
+  .result-meta{display:flex;gap:5px;align-items:center;flex-wrap:wrap;}
+  .badge{font-size:10px;padding:2px 6px;border-radius:4px;white-space:nowrap;font-weight:600;}
+  .badge.seeker{background:#ede9fe;color:#6d28d9;}
+  .badge.provider{background:#e0f2fe;color:#0369a1;}
+  .stage-badge{font-size:10px;padding:1px 5px;border-radius:3px;background:var(--soft);color:var(--muted);border:1px solid var(--border);}
+  .result-text{font-size:11px;color:var(--text);line-height:1.5;}
+  .result-text mark{background:#fef9c3;color:#854d0e;border-radius:2px;}
+  .empty-msg{color:var(--muted);font-size:12px;padding:16px 0;text-align:center;}
+
+  ::-webkit-scrollbar{width:4px;height:4px;}
+  ::-webkit-scrollbar-track{background:var(--bg);}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Blue Dot Conversation Analytics</h1>
+  <span class="tag">BETA</span>
+</header>
+
+<div class="layout">
+
+  <aside>
+    <div class="filter-group">
+      <label>Category</label>
+      <div class="pill-group" id="cat-pills"></div>
+    </div>
+    <div class="filter-group">
+      <label>Turn Bucket</label>
+      <div class="pill-group" id="bucket-pills"></div>
+    </div>
+    <div class="filter-group">
+      <label>Text Search</label>
+      <input class="search-box" id="search-input" placeholder="e.g. salary, driver…"/>
+      <button class="search-btn" id="search-btn">Search Turns</button>
+    </div>
+    <div class="stat-card"><div class="val" id="stat-sessions">–</div><div class="lbl">Sessions (filtered)</div></div>
+    <div class="stat-card"><div class="val" id="stat-engaged">–</div><div class="lbl">Engagement rate</div></div>
+    <div class="stat-card"><div class="val" id="stat-avg-turns">–</div><div class="lbl">Avg turns</div></div>
+  </aside>
+
+  <div class="content">
+
+    <!-- top: funnel+bucket | search -->
+    <div class="top-area">
+
+      <!-- left col: funnel stacked over bucket -->
+      <div class="left-col">
+        <div class="panel">
+          <div class="panel-title">Stage Funnel — Assistant Turns</div>
+          <svg id="funnel-svg" style="flex:1;min-height:0;width:100%;"></svg>
+        </div>
+        <div class="panel">
+          <div class="panel-title">Call Length Distribution</div>
+          <svg id="bucket-svg" style="flex:1;min-height:0;width:100%;"></svg>
+        </div>
+      </div>
+
+      <!-- search panel spanning remaining 2 cols -->
+      <div class="panel search-panel">
+        <div class="panel-title">Turn-level Text Search</div>
+        <div id="search-results"><p class="empty-msg">Enter a keyword in the sidebar and click Search Turns</p></div>
+      </div>
+
+    </div>
+
+    <!-- bottom: timeline full width -->
+    <div class="timeline-row">
+      <div class="panel" style="height:220px;">
+        <div class="panel-title">Interaction Timeline (by hour of day)</div>
+        <svg id="timeline-svg" style="flex:1;min-height:0;width:100%;"></svg>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /layout -->
+
+<div class="tooltip" id="tt"></div>
+
+<script>
+// ── Data ─────────────────────────────────────────────────────────────────────
+async function loadData(){
+  try{
+    const [s,t]=await Promise.all([
+      fetch("session_summary.json").then(r=>{if(!r.ok)throw 0;return r.json();}),
+      fetch("turn_level_export.json").then(r=>{if(!r.ok)throw 0;return r.json();})
+    ]);
+    window.SESSION_DATA=s;window.TURN_DATA=t;
+  }catch{useSyntheticData();}
+}
+function useSyntheticData(){
+  const cats=["KA_Job_Seeker","UP_Job_Seeker","KA_Job_Provider","UP_Job_Provider"];
+  const buckets=["Dropped Immediately","Very Short","Short","Medium","Long","Very Long"];
+  const stages=["Greeting","Self Introduction","Identity Check","Intent","Profile","Education","Experience","Job Type","Job Role","Salary","Location Area","WhatsApp Opt-in","WhatsApp Number","Confirmation","Completion","Opt Out","Call Close","Clarification","Re-engagement","Network Drop"];
+  const jobCats=["Data / Computer Jobs","Engineering / Technical","Banking / Government","Sales / Retail","Education","Healthcare","Finance / Accounting","Driving / Transport","Manufacturing / Skilled Trades","Other / Unclear","No Specific Preference"];
+  const texts=["I am looking for a job in data entry","I want to work as a driver","Any government job will be good","I have experience in sales","I want a part time job","I am a fresher","I need a job with good salary","I am interested in bank jobs","I want to work from home","I am a graduate engineer","I want a teaching job","I need a job urgently","I want an IT job","Any work is fine"];
+  const rnd=(a,b)=>Math.floor(Math.random()*(b-a+1))+a,pick=a=>a[rnd(0,a.length-1)];
+  const sessions=[],turns=[],base=new Date("2026-02-06T08:00:00+05:30");
+  for(let i=0;i<800;i++){
+    const dt=new Date(base.getTime()+rnd(0,28)*86400000+rnd(8,20)*3600000+rnd(0,59)*60000);
+    const cat=pick(cats),bkt=pick(buckets);
+    const tot=bkt==="Dropped Immediately"?1:bkt==="Very Short"?rnd(2,4):bkt==="Short"?rnd(5,8):bkt==="Medium"?rnd(9,16):bkt==="Long"?rnd(17,24):rnd(25,40);
+    const jc=cat.includes("Seeker")?pick(jobCats):null;
+    const sid=`demo/${i}`;
+    sessions.push({interaction_new:sid,category:cat,turn_bucket:bkt,total_turns:tot,job_category:jc,interaction_datetime:dt.toISOString(),language:pick(["Hindi","Kannada","English"]),stages_hit:stages.slice(0,rnd(2,12)).join("|")});
+    for(let t=1;t<=Math.min(tot,8);t++) turns.push({interaction_new:sid,turn_number:t,speaker:t%2?"Assistant":"User",text:pick(texts),stage:t%2?pick(stages):null,category:cat,turn_bucket:bkt,job_category:jc,interaction_datetime:dt.toISOString()});
+  }
+  window.SESSION_DATA=sessions;window.TURN_DATA=turns;
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const BUCKET_ORDER=["Dropped Immediately","Very Short","Short","Medium","Long","Very Long"];
+const STAGE_ORDER=["Greeting","Self Introduction","Identity Check","Intent","Profile","Education","Experience","Job Type","Job Role","Salary","Location Area","WhatsApp Opt-in","WhatsApp Number","Confirmation","Completion"];
+const BUCKET_COLOR=d3.scaleOrdinal().domain(BUCKET_ORDER).range(["#ef4444","#f97316","#f59e0b","#0ea5e9","#6366f1","#10b981"]);
+const STAGE_COLOR=d3.scaleSequential(d3.interpolateBlues);
+
+const tt=d3.select("#tt");
+const showTT=(html,e)=>tt.html(html).style("opacity",1).style("left",(e.clientX+14)+"px").style("top",(e.clientY-10)+"px");
+const hideTT=()=>tt.style("opacity",0);
+
+const state={cats:new Set(),buckets:new Set(),search:""};
+function filteredSessions(){
+  return window.SESSION_DATA.filter(d=>{
+    if(state.cats.size&&!state.cats.has(d.category))return false;
+    if(state.buckets.size&&!state.buckets.has(d.turn_bucket))return false;
+    return true;
+  });
+}
+
+// ── Pills ─────────────────────────────────────────────────────────────────────
+function buildPills(){
+  const allCats=[...new Set(window.SESSION_DATA.map(d=>d.category))].sort();
+  d3.select("#cat-pills").selectAll(".pill").data(allCats).join("div")
+    .attr("class",d=>"pill "+(d.includes("Seeker")?"seeker":"provider"))
+    .text(d=>d.replace(/_/g," "))
+    .on("click",function(e,d){
+      state.cats.has(d)?state.cats.delete(d):state.cats.add(d);
+      d3.select(this).classed("active",state.cats.has(d));update();
+    });
+  d3.select("#bucket-pills").selectAll(".pill").data(BUCKET_ORDER).join("div")
+    .attr("class","pill").text(d=>d)
+    .on("click",function(e,d){
+      state.buckets.has(d)?state.buckets.delete(d):state.buckets.add(d);
+      d3.select(this).classed("active",state.buckets.has(d));update();
+    });
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function updateStats(s){
+  const n=s.length,eng=s.filter(d=>d.turn_bucket!=="Dropped Immediately").length;
+  d3.select("#stat-sessions").text(n.toLocaleString());
+  d3.select("#stat-engaged").text(n?Math.round(eng/n*100)+"%":"–");
+  d3.select("#stat-avg-turns").text(n?d3.mean(s,d=>d.total_turns).toFixed(1):"–");
+}
+
+// ── Funnel ────────────────────────────────────────────────────────────────────
+function drawFunnel(sessions){
+  const el=document.getElementById("funnel-svg");
+  const W=el.clientWidth||300, H=el.clientHeight||200;
+  const m={t:4,r:46,b:20,l:118},iw=W-m.l-m.r,ih=H-m.t-m.b;
+  if(iw<=0||ih<=0)return;
+  const counts=STAGE_ORDER.map(s=>({stage:s,count:sessions.filter(d=>d.stages_hit&&d.stages_hit.split("|").includes(s)).length}));
+  const max=d3.max(counts,d=>d.count)||1;
+  STAGE_COLOR.domain([0,max]);
+  const svg=d3.select("#funnel-svg").attr("viewBox",`0 0 ${W} ${H}`);
+  svg.selectAll("*").remove();
+  const g=svg.append("g").attr("transform",`translate(${m.l},${m.t})`);
+  const x=d3.scaleLinear().domain([0,max]).range([0,iw]);
+  const y=d3.scaleBand().domain(STAGE_ORDER).range([0,ih]).padding(.18);
+  g.append("g").attr("class","grid").call(d3.axisBottom(x).ticks(3).tickSize(ih).tickFormat("")).attr("transform","translate(0,0)").select(".domain").remove();
+  g.append("g").attr("class","axis").call(d3.axisLeft(y).tickSize(0)).select(".domain").remove().selectAll("text").attr("x",-6).style("font-size","9px");
+  g.append("g").attr("class","axis").attr("transform",`translate(0,${ih})`).call(d3.axisBottom(x).ticks(3).tickFormat(d3.format(",d")));
+  g.selectAll(".bar").data(counts).join("rect")
+    .attr("class","bar").attr("x",0).attr("y",d=>y(d.stage))
+    .attr("width",d=>x(d.count)).attr("height",y.bandwidth()).attr("rx",3).attr("fill",d=>STAGE_COLOR(d.count))
+    .on("mousemove",(e,d)=>showTT(`<strong>${d.stage}</strong><br>${d.count.toLocaleString()} sessions (${Math.round(d.count/max*100)}% of peak)`,e))
+    .on("mouseleave",hideTT);
+  g.selectAll(".blbl").data(counts).join("text")
+    .attr("x",d=>x(d.count)+3).attr("y",d=>y(d.stage)+y.bandwidth()/2+3)
+    .attr("font-size",8).attr("fill","var(--muted)").text(d=>d.count>0?d.count.toLocaleString():"");
+}
+
+// ── Bucket ────────────────────────────────────────────────────────────────────
+function drawBuckets(sessions){
+  const el=document.getElementById("bucket-svg");
+  const W=el.clientWidth||300,H=el.clientHeight||160;
+  const m={t:4,r:10,b:44,l:40},iw=W-m.l-m.r,ih=H-m.t-m.b;
+  if(iw<=0||ih<=0)return;
+  const counts=BUCKET_ORDER.map(b=>({bucket:b,count:sessions.filter(d=>d.turn_bucket===b).length}));
+  const svg=d3.select("#bucket-svg").attr("viewBox",`0 0 ${W} ${H}`);
+  svg.selectAll("*").remove();
+  const g=svg.append("g").attr("transform",`translate(${m.l},${m.t})`);
+  const x=d3.scaleBand().domain(BUCKET_ORDER).range([0,iw]).padding(.25);
+  const y=d3.scaleLinear().domain([0,d3.max(counts,d=>d.count)||1]).nice().range([ih,0]);
+  g.append("g").attr("class","grid").call(d3.axisLeft(y).ticks(3).tickSize(-iw).tickFormat("")).select(".domain").remove();
+  g.append("g").attr("class","axis").attr("transform",`translate(0,${ih})`).call(d3.axisBottom(x).tickSize(0)).select(".domain").remove().selectAll("text").attr("transform","rotate(-22)").style("text-anchor","end").attr("dy",".3em").style("font-size","9px");
+  g.append("g").attr("class","axis").call(d3.axisLeft(y).ticks(3).tickFormat(d3.format(",d")));
+  g.selectAll(".bar").data(counts).join("rect")
+    .attr("class","bar").attr("x",d=>x(d.bucket)).attr("y",d=>y(d.count))
+    .attr("width",x.bandwidth()).attr("height",d=>ih-y(d.count)).attr("rx",3).attr("fill",d=>BUCKET_COLOR(d.bucket))
+    .on("mousemove",(e,d)=>showTT(`<strong>${d.bucket}</strong><br>${d.count.toLocaleString()} sessions`,e))
+    .on("mouseleave",hideTT);
+}
+
+// ── Timeline ──────────────────────────────────────────────────────────────────
+function drawTimeline(sessions){
+  const el=document.getElementById("timeline-svg");
+  const W=el.clientWidth||800,H=el.clientHeight||110;
+  const m={t:6,r:14,b:24,l:44},iw=W-m.l-m.r,ih=H-m.t-m.b;
+  if(iw<=0||ih<=0)return;
+  const byHour=d3.rollup(sessions,v=>({total:v.length,seekers:v.filter(d=>d.category.includes("Seeker")).length}),d=>new Date(d.interaction_datetime).getHours());
+  const hourData=d3.range(0,24).map(h=>{const v=byHour.get(h)||{total:0,seekers:0};return{hour:h,...v};});
+  const svg=d3.select("#timeline-svg").attr("viewBox",`0 0 ${W} ${H}`);
+  svg.selectAll("*").remove();
+  const g=svg.append("g").attr("transform",`translate(${m.l},${m.t})`);
+  const x=d3.scaleLinear().domain([0,23]).range([0,iw]);
+  const y=d3.scaleLinear().domain([0,d3.max(hourData,d=>d.total)||1]).nice().range([ih,0]);
+  const rScale=d3.scaleSqrt().domain([0,d3.max(hourData,d=>d.total)||1]).range([2,10]);
+  g.append("g").attr("class","grid").call(d3.axisLeft(y).ticks(4).tickSize(-iw).tickFormat("")).select(".domain").remove();
+  g.append("g").attr("class","axis").attr("transform",`translate(0,${ih})`).call(d3.axisBottom(x).ticks(24).tickFormat(h=>`${h}:00`)).selectAll("text").style("font-size","9px");
+  g.append("g").attr("class","axis").call(d3.axisLeft(y).ticks(4).tickFormat(d3.format(",d")));
+  // seekers area
+  const seekerArea=d3.area().x(d=>x(d.hour)).y0(ih).y1(d=>y(d.seekers)).curve(d3.curveCatmullRom);
+  g.append("path").datum(hourData).attr("d",seekerArea).attr("fill","#6366f122");
+  // total area
+  const totalArea=d3.area().x(d=>x(d.hour)).y0(ih).y1(d=>y(d.total)).curve(d3.curveCatmullRom);
+  g.append("path").datum(hourData).attr("d",totalArea).attr("fill","#0ea5e915");
+  // lines
+  const mkLine=acc=>d3.line().x(d=>x(d.hour)).y(d=>y(acc(d))).curve(d3.curveCatmullRom);
+  g.append("path").datum(hourData).attr("d",mkLine(d=>d.total)()).attr("fill","none").attr("stroke","#0ea5e9").attr("stroke-width",1.8);
+  g.append("path").datum(hourData).attr("d",mkLine(d=>d.seekers)()).attr("fill","none").attr("stroke","#6366f1").attr("stroke-width",1.8).attr("stroke-dasharray","4,3");
+  // dots
+  g.selectAll(".dot").data(hourData.filter(d=>d.total>0)).join("circle")
+    .attr("class","dot").attr("cx",d=>x(d.hour)).attr("cy",d=>y(d.total))
+    .attr("r",d=>rScale(d.total)).attr("fill","#0ea5e9").attr("stroke","#fff").attr("stroke-width",1.5).style("cursor","pointer")
+    .on("mousemove",(e,d)=>showTT(`<strong>${d.hour}:00–${d.hour+1}:00</strong><br>Total: ${d.total}<br>Seekers: ${d.seekers}<br>Providers: ${d.total-d.seekers}`,e))
+    .on("mouseleave",hideTT);
+  // legend
+  const lg=svg.append("g").attr("transform",`translate(${m.l+iw-120},${m.t})`);
+  [[0,"#0ea5e9","Total","none"],[14,"#6366f1","Seekers","4,3"]].forEach(([dy,c,lbl,dash])=>{
+    lg.append("line").attr("x1",0).attr("x2",16).attr("y1",dy+5).attr("y2",dy+5).attr("stroke",c).attr("stroke-width",1.8).attr("stroke-dasharray",dash);
+    lg.append("text").attr("x",20).attr("y",dy+9).attr("fill","var(--muted)").attr("font-size",9).text(lbl);
+  });
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+function runSearch(){
+  const q=document.getElementById("search-input").value.trim().toLowerCase();
+  state.search=q;
+  const div=document.getElementById("search-results");
+  if(!q){div.innerHTML='<p class="empty-msg">Enter a keyword in the sidebar and click Search Turns</p>';return;}
+  const active=new Set(filteredSessions().map(d=>d.interaction_new));
+  const res=window.TURN_DATA.filter(d=>active.has(d.interaction_new)&&d.text&&d.text.toLowerCase().includes(q)).slice(0,120);
+  if(!res.length){div.innerHTML='<p class="empty-msg">No turns matched your search</p>';return;}
+  const re=new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")})`, "gi");
+  div.innerHTML=res.map(d=>{
+    const sk=d.category.includes("Seeker");
+    return `<div class="result-row">
+      <div class="result-meta">
+        <span class="badge ${sk?"seeker":"provider"}">${d.category.replace(/_/g," ")}</span>
+        <span class="stage-badge">${d.stage||"–"}</span>
+        <span style="color:var(--muted);font-size:10px">Turn ${d.turn_number} · ${d.turn_bucket}</span>
+      </div>
+      <div class="result-text">${d.text.replace(re,"<mark>$1</mark>")}</div>
+    </div>`;
+  }).join("");
+}
+document.getElementById("search-btn").addEventListener("click",runSearch);
+document.getElementById("search-input").addEventListener("keydown",e=>{if(e.key==="Enter")runSearch();});
+
+// ── Update ────────────────────────────────────────────────────────────────────
+function update(){
+  const s=filteredSessions();
+  updateStats(s);
+  // defer so SVG elements have final dimensions
+  requestAnimationFrame(()=>{drawFunnel(s);drawBuckets(s);drawTimeline(s);});
+  if(state.search)runSearch();
+}
+
+loadData().then(()=>{buildPills();update();window.addEventListener("resize",update);});
+</script>
+</body>
+</html>
